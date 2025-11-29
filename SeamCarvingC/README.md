@@ -16,13 +16,13 @@ This is a high-performance C implementation of Seam Carving with a real-time vis
 ## Compilation
 
 ```bash
-gcc -O3 seam_carving.c -o seamcarve $(sdl2-config --cflags --libs) -lm
+make
 ```
 
 ## Usage
 
 ```bash
-./seamcarve <image_file> [output_file]
+./build/seamcarve <image_file> [output_file]
 ```
 
 ### Controls
@@ -36,5 +36,5 @@ gcc -O3 seam_carving.c -o seamcarve $(sdl2-config --cflags --libs) -lm
 ### Example
 
 ```bash
-./seamcarve jack.jpeg result.jpg
+./build/seamcarve balloons.jpg result.jpg
 ```
