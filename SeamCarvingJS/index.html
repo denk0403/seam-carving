@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seam Carving</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Seam Carving Content-Aware Resizing</h1>
+        
+        <div class="controls">
+            <div class="input-group">
+                <label for="imageUpload">Upload Image:</label>
+                <input type="file" id="imageUpload" accept="image/*">
+            </div>
+            
+            <div class="button-group">
+                <button id="btnPlayPause">Pause</button>
+                <button id="btnToggleMode">Mode: Vertical</button>
+                <button id="btnReverse">Reverse (Insert)</button>
+                <button id="btnColorMode">Color: Normal</button>
+                <button id="btnReset">Reset</button>
+            </div>
+        </div>
+
+        <div class="status">
+            <span id="statusText">Waiting for image...</span>
+            <span id="dimensions"></span>
+            <span id="fpsCounter"></span>
+        </div>
+
+        <div class="canvas-container">
+            <canvas id="seamCanvas"></canvas>
+        </div>
+
+        <div class="instructions">
+            <h3>Controls</h3>
+            <ul>
+                <li><strong>Space</strong>: Play/Pause</li>
+                <li><strong>m</strong>: Cycle Removal Modes (Vertical -> Horizontal -> Alternating -> Random)</li>
+                <li><strong>v</strong>: Vertical Mode</li>
+                <li><strong>h</strong>: Horizontal Mode</li>
+                <li><strong>i</strong>: Insert Seams (when paused and in reverse mode)</li>
+                <li><strong>1 / 2</strong>: Toggle Color Mode (1: Normal, 2: Energy)</li>
+            </ul>
+        </div>
+    </div>
+    <div id="dropOverlay" class="drop-overlay hidden">
+        <div class="drop-text">Drop image here to upload</div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
+
