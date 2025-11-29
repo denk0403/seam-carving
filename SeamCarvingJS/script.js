@@ -1,11 +1,27 @@
-import init, { SeamCarver } from './pkg/seam_carving_wasm.js';
+import init, { SeamCarver, initThreadPool } from './pkg/seam_carving_wasm.js';
 
 // Initialize WASM
 let wasmInitialized = false;
-init().then(() => {
+let wasmModule;
+
+async function initWasm() {
+    wasmModule = await init();
+    
+    // Initialize thread pool if available
+    if (initThreadPool) {
+        if (!window.crossOriginIsolated) {
+            console.warn("WASM Threads require 'Cross-Origin-Opener-Policy: same-origin' and 'Cross-Origin-Embedder-Policy: require-corp' headers. Parallel performance will not be enabled.");
+        }
+        const concurrency = navigator.hardwareConcurrency || 4;
+        await initThreadPool(concurrency);
+        console.log(`WASM Thread pool initialized with ${concurrency} threads`);
+    }
+
     wasmInitialized = true;
-    console.log("WASM Initialized");
-});
+    console.log("WASM module loaded");
+}
+
+initWasm();
 
 // --- Seam Carving Logic Wrapper ---
 
@@ -68,11 +84,16 @@ class SeamCarvingWrapper {
     }
     
     // Placeholder, will fix in write
+    reset(image) {
+         const data = new Uint8Array(image.data.buffer);
+         this.wasmCarver.reset(image.width, image.height, data);
+    }
 }
 
 // --- UI Glue ---
 
 let seamCarving = null;
+let webcamCarver = null;
 let canvas = document.getElementById("seamCanvas");
 let ctx = canvas.getContext("2d", { willReadFrequently: true });
 let animationId = null;
@@ -165,7 +186,12 @@ function loop(timestamp) {
         // Use WASM
         // Note: creating new SeamCarver every frame is expensive if we allocate memory?
         // It's okay for now.
-        const sc = new SeamCarvingWrapper(imgData);
+        if (!webcamCarver) {
+            webcamCarver = new SeamCarvingWrapper(imgData);
+        } else {
+            webcamCarver.reset(imgData);
+        }
+        const sc = webcamCarver;
 
         const targetW = parseInt(inputTargetWidth.value) || w;
         const targetH = parseInt(inputTargetHeight.value) || h;
@@ -220,6 +246,7 @@ function stopWebcam() {
         }
         webcamControls.style.display = "none";
         videoWrapper.style.display = "none";
+        webcamCarver = null;
     }
 }
 
@@ -396,15 +423,6 @@ SeamCarvingWrapper.prototype.onTick = function() {
 // Import memory to be safe
 // We need to get the memory object. 
 // If we use the default export from init, it's usually the module instance.
-let wasmModule;
-async function initWasm() {
-    wasmModule = await init();
-    wasmInitialized = true;
-    console.log("WASM module loaded");
-}
-
-// Overwrite init at top
-initWasm();
 
 SeamCarvingWrapper.prototype.updateCanvas = function(ctx, canvas) {
     const w = this.width;
@@ -423,7 +441,10 @@ SeamCarvingWrapper.prototype.updateCanvas = function(ctx, canvas) {
     // Access memory buffer from wasmModule
     const memory = wasmModule.memory; 
     const slices = new Uint8ClampedArray(memory.buffer, ptr, len);
-    const imgData = new ImageData(slices, w, h);
+    
+    // Create a copy of the data for ImageData because SharedArrayBuffer is not allowed
+    const dataCopy = new Uint8ClampedArray(slices);
+    const imgData = new ImageData(dataCopy, w, h);
     
     // Center
     const dx = Math.floor((canvas.width - w) / 2);
