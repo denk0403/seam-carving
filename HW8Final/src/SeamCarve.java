@@ -468,21 +468,88 @@ class Utils {
 
   // returns an arraylist of seams at the bottom row of pixels
   ArrayList<ASeamInfo> seamify(ArrayList<ArrayList<Pixel>> pixels, boolean isVert) {
-    ArrayList<ASeamInfo> memo = new ArrayList<>();
-    ArrayList<ASeamInfo> nextMemo = new ArrayList<>();
-    for (int index = 0; index < pixels.get(0).size(); index += 1) {
-      memo.add(null);
+    if (pixels.isEmpty() || pixels.get(0).isEmpty()) {
+      return new ArrayList<ASeamInfo>();
     }
-    for (ArrayList<Pixel> pixelArr : pixels) {
-      int x = 0;
-      for (Pixel pixel : pixelArr) {
-        nextMemo.add(this.seamifyMemo(pixel, memo, x, isVert));
-        x += 1;
+
+    int h = pixels.size();
+    int w = pixels.get(0).size();
+
+    double[] rowEnergies = new double[w];
+    int[][] parentIndices = new int[h][w];
+
+    // Initialize first row
+    for (int x = 0; x < w; x++) {
+      rowEnergies[x] = pixels.get(0).get(x).energy();
+      parentIndices[0][x] = -1;
+    }
+
+    double[] nextRowEnergies = new double[w];
+
+    // DP
+    for (int y = 1; y < h; y++) {
+      ArrayList<Pixel> currentRow = pixels.get(y);
+      for (int x = 0; x < w; x++) {
+        Pixel p = currentRow.get(x);
+        double energy = p.energy();
+
+        double minC = rowEnergies[x];
+        int minIdx = x;
+
+        // Check top-left
+        if (x > 0 && rowEnergies[x - 1] < minC) {
+          minC = rowEnergies[x - 1];
+          minIdx = x - 1;
+        }
+        // Check top-right
+        if (x < w - 1 && rowEnergies[x + 1] < minC) {
+          minC = rowEnergies[x + 1];
+          minIdx = x + 1;
+        }
+
+        nextRowEnergies[x] = minC + energy;
+        parentIndices[y][x] = minIdx;
       }
-      memo = nextMemo;
-      nextMemo = new ArrayList<>();
+      System.arraycopy(nextRowEnergies, 0, rowEnergies, 0, w);
     }
-    return memo;
+
+    // Find best seam end
+    double minTotal = Double.MAX_VALUE;
+    int minIdx = -1;
+    for (int x = 0; x < w; x++) {
+      if (rowEnergies[x] < minTotal) {
+        minTotal = rowEnergies[x];
+        minIdx = x;
+      }
+    }
+
+    // Reconstruct path
+    int[] path = new int[h];
+    int currX = minIdx;
+    for (int y = h - 1; y >= 0; y--) {
+      path[y] = currX;
+      currX = parentIndices[y][currX];
+    }
+
+    // Build SeamInfo linked list (top to bottom)
+    ASeamInfo lastSeam = null;
+    double currentTotalWeight = 0;
+
+    for (int y = 0; y < h; y++) {
+      Pixel p = pixels.get(y).get(path[y]);
+      currentTotalWeight += p.energy();
+
+      if (isVert) {
+        lastSeam = new VertSeamInfo(p, currentTotalWeight, (VertSeamInfo) lastSeam, path[y]);
+      }
+      else {
+        lastSeam = new HorizSeamInfo(p, currentTotalWeight, (HorizSeamInfo) lastSeam, path[y]);
+      }
+    }
+
+    ArrayList<ASeamInfo> result = new ArrayList<>();
+    result.add(lastSeam);
+    return result;
   }
 
   // returns the most boring seam coming from the 3 neighbor seams above
