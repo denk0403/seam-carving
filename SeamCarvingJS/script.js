@@ -948,6 +948,21 @@ window.addEventListener("drop", (e) => {
 	}
 });
 
+// Paste Logic
+window.addEventListener("paste", (e) => {
+	if (e.clipboardData && e.clipboardData.items) {
+		const items = e.clipboardData.items;
+		for (let i = 0; i < items.length; i++) {
+			if (items[i].type.indexOf("image") !== -1) {
+				const file = items[i].getAsFile();
+				handleImageUpload(file);
+				e.preventDefault();
+				return;
+			}
+		}
+	}
+});
+
 // Controls
 btnPlayPause.addEventListener("click", () => {
 	if (seamCarving) seamCarving.isPlaying = !seamCarving.isPlaying;
