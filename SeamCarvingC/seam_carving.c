@@ -5,6 +5,15 @@
 #include <math.h>
 #include <stdbool.h>
 #include <float.h>
+#include <time.h>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
+#include <SDL.h>
 
 // --- Constants & Structs ---
 
@@ -54,16 +63,13 @@ void pixel_slide_still_horiz(Pixel *p);
 void pixel_slide_up(Pixel *p);
 void pixel_slide_down(Pixel *p);
 
-// --- PPM I/O ---
+// --- Image Struct ---
 
 typedef struct {
     int width;
     int height;
     Pixel ***pixels; // 2D array of pointers: pixels[y][x]
 } Image;
-
-Image* load_ppm(const char *filename);
-void save_ppm(const char *filename, Image *img);
 
 // --- Seam Carving Logic ---
 
@@ -103,13 +109,11 @@ Pixel* create_pixel(uint32_t color) {
 }
 
 void connect_left_to_right(Pixel *on_left, Pixel *on_right) {
-    // onLeft.setRight(onRight)
     on_left->right = on_right;
     pixel_invalidate_energy(on_left);
     pixel_invalidate_energy(on_left->up);
     pixel_invalidate_energy(on_left->down);
 
-    // onRight.setLeft(onLeft)
     on_right->left = on_left;
     pixel_invalidate_energy(on_right);
     pixel_invalidate_energy(on_right->up);
@@ -117,13 +121,11 @@ void connect_left_to_right(Pixel *on_left, Pixel *on_right) {
 }
 
 void connect_down_to_up(Pixel *on_bottom, Pixel *on_top) {
-    // onBottom.setUp(onTop)
     on_bottom->up = on_top;
     pixel_invalidate_energy(on_bottom);
     pixel_invalidate_energy(on_bottom->left);
     pixel_invalidate_energy(on_bottom->right);
 
-    // onTop.setDown(onBottom)
     on_top->down = on_bottom;
     pixel_invalidate_energy(on_top);
     pixel_invalidate_energy(on_top->left);
@@ -214,102 +216,56 @@ void pixel_slide_down(Pixel *p) {
     connect_left_to_right(p->left, p->up);
 }
 
-// --- PPM I/O ---
+// --- IO using STB ---
 
-
-#include <ctype.h>
-
-// Safe integer reader that skips comments and whitespace
-int read_int(FILE *f) {
-    int c;
-    while (1) {
-        c = fgetc(f);
-        if (c == EOF) return -1;
-        if (c == '#') {
-            while (c != '\n' && c != EOF) c = fgetc(f);
-        } else if (isspace(c)) {
-            continue;
-        } else {
-            ungetc(c, f);
-            break;
-        }
-    }
-    int val;
-    if (fscanf(f, "%d", &val) == 1) return val;
-    return -1;
-}
-
-Image* load_ppm(const char *filename) {
-    FILE *f = fopen(filename, "r");
-    if (!f) {
-        perror("Error opening file");
-        exit(1);
-    }
-
-    char format[16];
-    if (fscanf(f, "%15s", format) != 1) {
-        fprintf(stderr, "Error reading header\n");
-        exit(1);
-    }
-    
-    // Check format
-    if (strcmp(format, "P3") != 0) {
-        fprintf(stderr, "Only PPM P3 supported. Got %s\n", format);
-        exit(1);
-    }
-
-    int width = read_int(f);
-    int height = read_int(f);
-    int max_val = read_int(f);
-    
-    if (width <= 0 || height <= 0 || max_val <= 0) {
-        fprintf(stderr, "Invalid dimensions or max_val: %d %d %d\n", width, height, max_val);
+Image* load_image(const char *filename) {
+    int w, h, channels;
+    unsigned char *data = stbi_load(filename, &w, &h, &channels, 3); // Force 3 channels (RGB)
+    if (!data) {
+        fprintf(stderr, "Error loading image %s: %s\n", filename, stbi_failure_reason());
         exit(1);
     }
 
     Image *img = (Image*)malloc(sizeof(Image));
-    img->width = width;
-    img->height = height;
-    img->pixels = (Pixel***)malloc(height * sizeof(Pixel**));
+    img->width = w;
+    img->height = h;
+    img->pixels = (Pixel***)malloc(h * sizeof(Pixel**));
 
-    for (int y = 0; y < height; y++) {
-        img->pixels[y] = (Pixel**)malloc(width * sizeof(Pixel*));
-        for (int x = 0; x < width; x++) {
-            int r = read_int(f);
-            int g = read_int(f);
-            int b = read_int(f);
-            
-            if (r == -1 || g == -1 || b == -1) {
-                fprintf(stderr, "Error reading pixel data at %d, %d\n", x, y);
-                exit(1);
-            }
-            uint32_t color = ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (b & 0xFF);
+    for (int y = 0; y < h; y++) {
+        img->pixels[y] = (Pixel**)malloc(w * sizeof(Pixel*));
+        for (int x = 0; x < w; x++) {
+            int idx = (y * w + x) * 3;
+            uint32_t r = data[idx];
+            uint32_t g = data[idx+1];
+            uint32_t b = data[idx+2];
+            uint32_t color = (r << 16) | (g << 8) | b;
             img->pixels[y][x] = create_pixel(color);
         }
     }
-    fclose(f);
+    
+    stbi_image_free(data);
     return img;
 }
 
-void save_ppm(const char *filename, Image *img) {
-    FILE *f = fopen(filename, "w");
-    if (!f) {
-        perror("Error writing file");
-        exit(1);
-    }
-
-    fprintf(f, "P3\n%d %d\n255\n", img->width, img->height);
-    for (int y = 0; y < img->height; y++) {
-        for (int x = 0; x < img->width; x++) {
+void save_image(const char *filename, Image *img) {
+    int w = img->width;
+    int h = img->height;
+    unsigned char *data = (unsigned char*)malloc(w * h * 3);
+    
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
             uint32_t c = img->pixels[y][x]->color;
-            int r = (c >> 16) & 0xFF;
-            int g = (c >> 8) & 0xFF;
-            int b = c & 0xFF;
-            fprintf(f, "%d %d %d ", r, g, b);
+            int idx = (y * w + x) * 3;
+            data[idx] = (c >> 16) & 0xFF;
+            data[idx+1] = (c >> 8) & 0xFF;
+            data[idx+2] = c & 0xFF;
         }
-        fprintf(f, "\n");
     }
-    fclose(f);
+    
+    if (!stbi_write_jpg(filename, w, h, 3, data, 90)) {
+        fprintf(stderr, "Error writing image to %s\n", filename);
+    }
+    free(data);
 }
 
 // --- Graph Construction ---
@@ -334,21 +290,17 @@ void construct_pixel_graph(Image *img) {
 
 // --- Seam Logic ---
 
-// Helper to find min seam
-// Returns array of indices (length = height) representing the seam path from top to bottom
 int* find_seam(Image *img) {
     int w = img->width;
     int h = img->height;
     float *energies = (float*)malloc(w * h * sizeof(float));
-    int *parents = (int*)malloc(w * h * sizeof(int)); // Stores index in prev row
+    int *parents = (int*)malloc(w * h * sizeof(int));
 
-    // Initialize first row
     for (int x = 0; x < w; x++) {
         energies[x] = (float)pixel_energy(img->pixels[0][x]);
         parents[x] = -1;
     }
 
-    // DP
     for (int y = 1; y < h; y++) {
         int row_offset = y * w;
         int prev_row_offset = (y - 1) * w;
@@ -357,11 +309,9 @@ int* find_seam(Image *img) {
             Pixel *p = img->pixels[y][x];
             float energy = (float)pixel_energy(p);
 
-            // Default top neighbor
             int min_parent_idx = prev_row_offset + x;
             float min_parent_cost = energies[min_parent_idx];
 
-            // Top-Left
             if (x > 0) {
                 int left_idx = prev_row_offset + (x - 1);
                 if (energies[left_idx] < min_parent_cost) {
@@ -370,7 +320,6 @@ int* find_seam(Image *img) {
                 }
             }
 
-            // Top-Right
             if (x < w - 1) {
                 int right_idx = prev_row_offset + (x + 1);
                 if (energies[right_idx] < min_parent_cost) {
@@ -384,7 +333,6 @@ int* find_seam(Image *img) {
         }
     }
 
-    // Find best seam end
     int min_seam_idx = -1;
     float min_seam_cost = FLT_MAX;
     int last_row_offset = (h - 1) * w;
@@ -397,11 +345,10 @@ int* find_seam(Image *img) {
         }
     }
 
-    // Backtrack
     int *path = (int*)malloc(h * sizeof(int));
     int curr_idx = min_seam_idx;
     for (int y = h - 1; y >= 0; y--) {
-        path[y] = curr_idx % w; // Store x coordinate
+        path[y] = curr_idx % w;
         curr_idx = parents[curr_idx];
     }
 
@@ -411,135 +358,57 @@ int* find_seam(Image *img) {
 }
 
 void remove_vertical_seam_logic(Image *img, int *path) {
-    // Process bottom-up to match JS recursion logic, though order matters mostly for pointer updates
-    // JS code recurses: calls removeSelf on parent (y-1) then updates self (y).
-    // This implies top-down processing if we unwind the stack?
-    // JS: 
-    //  seam.removeSelf(row):
-    //    if cameFrom != null: cameFrom.removeSelf(row-1)
-    //    slide...
-    // So it updates row 0, then row 1, etc. Top-down order of EFFECT.
-    
     for (int y = 0; y < img->height; y++) {
         int x = path[y];
         Pixel *p = img->pixels[y][x];
         
-        // Determine slide direction based on parent relationship
         if (y > 0) {
-            // Compare with parent in previous row
-            // Parent is path[y-1]
-            // Pixel is path[y] (at x)
-            // In JS: if cameFrom.pixel.sameIPixelAs(pixel.up) -> SlideStill
-            //        if cameFrom.pixel.sameIPixelAs(pixel.up.right) -> SlideLeft
-            //        if cameFrom.pixel.sameIPixelAs(pixel.up.left) -> SlideRight
-            
-            // We need to check the pointer relationships because x-indices are from the array,
-            // but the graph might be twisted? No, the array is consistent with the graph until we modify it.
-            // Actually, using indices is safer if the array is valid.
-            // Parent x_prev = path[y-1]
-            // Current x = path[y]
-            
-            // But wait, the JS logic uses `pixel.up` pointers. 
-            // If we use indices: 
-            // parent x is x_prev. 
-            // p->up should be pixels[y-1][x].
-            // p->up->right should be pixels[y-1][x+1].
-            // p->up->left should be pixels[y-1][x-1].
-            
             int x_prev = path[y-1];
-            
-            // If parent is directly above (x_prev == x) -> SlideStill
-            // If parent is top-right (x_prev == x + 1) -> SlideLeft (The seam moved Left from parent)
-            // If parent is top-left (x_prev == x - 1) -> SlideRight (The seam moved Right from parent)
-            
             if (x_prev == x) {
                 pixel_slide_still(p);
             } else if (x_prev == x + 1) {
-                // Parent is to the right. 
-                // JS: cameFrom == pixel.up.right
                 pixel_slide_left(p);
             } else if (x_prev == x - 1) {
-                // Parent is to the left.
-                // JS: cameFrom == pixel.up.left
                 pixel_slide_right(p);
-            } else {
-               // Should not happen in 8-connected seam
-               // Fallback or error
             }
         } else {
-            // Top row always SlideStill (no parent)
             pixel_slide_still(p);
         }
 
-        // Remove from array
-        // Shift rest of row
         for (int k = x; k < img->width - 1; k++) {
             img->pixels[y][k] = img->pixels[y][k+1];
         }
-        img->pixels[y][img->width - 1] = NULL; // Clear last
+        img->pixels[y][img->width - 1] = NULL;
     }
     img->width--;
 }
 
 void remove_horizontal_seam_logic(Image *img, int *path) {
-    // path contains row indices for each column (since we are operating on transposed array conceptually)
-    // But here `img` is the TRANSPOSED array passed to this function.
-    // So logic is identical to remove_vertical_seam_logic BUT using Horiz specific slide functions.
-    
-    // Wait, if I transpose the array, the "graph" pointers are NOT transposed.
-    // So `p->up` is still the neighbor above in the ORIGINAL image.
-    // But in the transposed array, `p` at `[y][x]` corresponds to Original `[x][y]`.
-    // So `Transposed[y][x]` -> `Original[col][row]`.
-    // Increasing `y` in Transposed means increasing `col` in Original (moving Right).
-    // Increasing `x` in Transposed means increasing `row` in Original (moving Down).
-    
-    // So iterating `y` from 0 to `height` (Original Width) corresponds to moving Left->Right in Original.
-    // `path[y]` gives the `x` (Original Row) to remove at that column.
-    
-    // JS `HorizSeamInfo.removeSelf`:
-    // Checks `cameFrom` (Previous Column).
-    // If `cameFrom` is `pixel.left` -> SlideStillHoriz
-    // If `cameFrom` is `pixel.left.down` -> SlideUp
-    // If `cameFrom` is `pixel.left.up` -> SlideDown
-    
-    for (int y = 0; y < img->height; y++) { // y is Col index in original
-        int x = path[y]; // x is Row index in original
+    for (int y = 0; y < img->height; y++) {
+        int x = path[y];
         Pixel *p = img->pixels[y][x];
         
         if (y > 0) {
             int x_prev = path[y-1];
-            
-            // x_prev is row index in previous column.
-            // x is row index in current column.
-            // `pixel.left` is pixel in previous column at same row.
-            
             if (x_prev == x) {
-                // Parent is same row, prev col -> Left
                 pixel_slide_still_horiz(p);
             } else if (x_prev == x + 1) {
-                // Parent is row below (x+1), prev col.
-                // JS: cameFrom == pixel.left.down
                 pixel_slide_up(p);
             } else if (x_prev == x - 1) {
-                // Parent is row above (x-1), prev col.
-                // JS: cameFrom == pixel.left.up
                 pixel_slide_down(p);
             }
         } else {
             pixel_slide_still_horiz(p);
         }
         
-        // Remove from array (Transposed array, so removing "x" from row "y")
         for (int k = x; k < img->width - 1; k++) {
             img->pixels[y][k] = img->pixels[y][k+1];
         }
         img->pixels[y][img->width - 1] = NULL;
     }
-    img->width--; // Decrease "width" of transposed array (which is Original Height)
+    img->width--;
 }
 
-// Creates a new Image struct with transposed array
-// Does NOT copy pixels, just pointers.
 Image* transpose_image_array(Image *img) {
     Image *new_img = (Image*)malloc(sizeof(Image));
     new_img->width = img->height;
@@ -555,23 +424,13 @@ Image* transpose_image_array(Image *img) {
     return new_img;
 }
 
-// Update original image struct from transposed one (just dimensions and array pointer)
 void update_from_transposed(Image *original, Image *transposed) {
-    // The transposed image has `width` = `original->height - 1` (after removal)
-    // and `height` = `original->width`.
-    
-    // We need to rebuild `original->pixels` which should be `original->height - 1` x `original->width`? 
-    // No, horizontal seam removal reduces Height.
-    // Transposed `width` decreased. So `original->height` should decrease.
-    
-    // Free old array structure of original
     for(int y=0; y<original->height; y++) free(original->pixels[y]);
     free(original->pixels);
     
-    original->height = transposed->width; // The dimension that was reduced
-    original->width = transposed->height; // The dimension that stayed same
+    original->height = transposed->width;
+    original->width = transposed->height;
     
-    // Reconstruct array from transposed
     original->pixels = (Pixel***)malloc(original->height * sizeof(Pixel**));
     for (int y = 0; y < original->height; y++) {
         original->pixels[y] = (Pixel**)malloc(original->width * sizeof(Pixel*));
@@ -582,7 +441,6 @@ void update_from_transposed(Image *original, Image *transposed) {
 }
 
 void free_image_struct(Image *img) {
-    // Only frees the array structure, not the pixels (pixels are shared)
     for(int y=0; y<img->height; y++) free(img->pixels[y]);
     free(img->pixels);
     free(img);
@@ -595,53 +453,163 @@ void seam_carve(Image *img, int mode) {
         free(path);
     } else { // Horiz
         Image *transposed = transpose_image_array(img);
-        int *path = find_seam(transposed); // Find seam on transposed (Vertical in transposed = Horizontal in real)
-        remove_horizontal_seam_logic(transposed, path); // Use special logic for graph updates
+        int *path = find_seam(transposed);
+        remove_horizontal_seam_logic(transposed, path);
         update_from_transposed(img, transposed);
         free(path);
         free_image_struct(transposed);
     }
 }
 
+// --- GUI Main ---
+
+void update_texture(SDL_Texture *texture, Image *img) {
+    void *pixels;
+    int pitch;
+    if (SDL_LockTexture(texture, NULL, &pixels, &pitch) < 0) {
+        fprintf(stderr, "Failed to lock texture: %s\n", SDL_GetError());
+        return;
+    }
+
+    // Pixel data in SDL texture is usually ARGB or ABGR depending on format
+    // We asked for SDL_PIXELFORMAT_ARGB8888
+    uint32_t *dst = (uint32_t*)pixels;
+    
+    for (int y = 0; y < img->height; y++) {
+        for (int x = 0; x < img->width; x++) {
+            uint32_t c = img->pixels[y][x]->color;
+            // SDL ARGB8888: 0xAARRGGBB
+            // Our color is 0xRRGGBB
+            dst[y * (pitch / 4) + x] = 0xFF000000 | c; 
+        }
+    }
+    SDL_UnlockTexture(texture);
+}
+
 int main(int argc, char **argv) {
-    if (argc < 5) {
-        printf("Usage: %s <input.ppm> <output.ppm> <v_seams> <h_seams>\n", argv[0]);
+    if (argc < 2) {
+        printf("Usage: %s <image_file> [optional output_file]\n", argv[0]);
+        printf("Controls:\n SPACE: Pause/Play\n R: Remove Random\n V: Remove Vertical\n H: Remove Horizontal\n S: Save Current\n ESC: Quit\n");
         return 1;
     }
 
     pixel_init_border();
 
     printf("Loading %s...\n", argv[1]);
-    Image *img = load_ppm(argv[1]);
+    Image *img = load_image(argv[1]);
+    printf("Image loaded: %dx%d\n", img->width, img->height);
     
     printf("Constructing graph...\n");
     construct_pixel_graph(img);
+    printf("Graph constructed.\n");
 
-    int v_seams = atoi(argv[3]);
-    int h_seams = atoi(argv[4]);
-
-    printf("Removing %d vertical seams...\n", v_seams);
-    for (int i = 0; i < v_seams; i++) {
-        if (img->width <= 1) break;
-        seam_carve(img, 0);
-        if (i % 10 == 0) printf(".");
-        fflush(stdout);
+    // SDL Init
+    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
+        fprintf(stderr, "SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
+        return 1;
     }
-    printf("\n");
 
-    printf("Removing %d horizontal seams...\n", h_seams);
-    for (int i = 0; i < h_seams; i++) {
-        if (img->height <= 1) break;
-        seam_carve(img, 1);
-        if (i % 10 == 0) printf(".");
-        fflush(stdout);
+    SDL_Window *window = SDL_CreateWindow("Seam Carving C", 
+                                          SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 
+                                          img->width, img->height, 
+                                          SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+    if (!window) {
+        fprintf(stderr, "Window could not be created! SDL_Error: %s\n", SDL_GetError());
+        return 1;
     }
-    printf("\n");
 
-    printf("Saving to %s...\n", argv[2]);
-    save_ppm(argv[2], img);
+    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    if (!renderer) {
+        fprintf(stderr, "Renderer could not be created! SDL_Error: %s\n", SDL_GetError());
+        return 1;
+    }
 
-    printf("Done.\n");
+    // Create a streaming texture
+    SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, 
+                                             SDL_TEXTUREACCESS_STREAMING, 
+                                             img->width, img->height);
+    if (!texture) {
+        fprintf(stderr, "Texture could not be created! SDL_Error: %s\n", SDL_GetError());
+        return 1;
+    }
+
+    bool quit = false;
+    bool paused = true;
+    int mode = 2; // 0=Vert, 1=Horiz, 2=Random
+    SDL_Event e;
+    
+    srand(time(NULL)); // Seed random number generator
+    
+    update_texture(texture, img);
+
+    while (!quit) {
+        while (SDL_PollEvent(&e) != 0) {
+            if (e.type == SDL_QUIT) {
+                quit = true;
+            } else if (e.type == SDL_KEYDOWN) {
+                switch (e.key.keysym.sym) {
+                    case SDLK_ESCAPE: quit = true; break;
+                    case SDLK_SPACE: paused = !paused; break;
+                    case SDLK_v: mode = 0; paused = false; break;
+                    case SDLK_h: mode = 1; paused = false; break;
+                    case SDLK_r: mode = 2; paused = false; break;
+                    case SDLK_s: 
+                        if (argc > 2) {
+                            printf("Saving to %s...\n", argv[2]);
+                            save_image(argv[2], img);
+                        } else {
+                            printf("Saving to output.jpg...\n");
+                            save_image("output.jpg", img);
+                        }
+                        break;
+                }
+            }
+        }
+
+        if (!paused && img->width > 1 && img->height > 1) {
+            int current_mode = mode;
+            if (mode == 2) {
+                // Random heuristic similar to JS
+                current_mode = ((float)rand() / RAND_MAX) >= (float)img->height / (img->width + img->height) ? 0 : 1;
+            }
+            seam_carve(img, current_mode);
+            
+            // We must recreate texture if dimensions change? 
+            // SDL_UpdateTexture allows updating a rect, but the pitch assumes full width.
+            // Easiest is to keep the large texture and render a smaller part of it?
+            // Or update the subset. 
+            // Let's just update the texture. Since img->width shrank, we need to be careful.
+            // Actually, we can't resize a texture. We should destroy and recreate it if we want to fit exactly, 
+            // or just write to top-left and render top-left.
+            
+            update_texture(texture, img);
+        }
+
+        // Render
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        
+        // Render only the valid part of the image
+        SDL_Rect srcRect = {0, 0, img->width, img->height};
+        SDL_Rect dstRect = {0, 0, img->width, img->height};
+        
+        // Center in window
+        int winW, winH;
+        SDL_GetWindowSize(window, &winW, &winH);
+        dstRect.x = (winW - img->width) / 2;
+        dstRect.y = (winH - img->height) / 2;
+        
+        SDL_RenderCopy(renderer, texture, &srcRect, &dstRect);
+        SDL_RenderPresent(renderer);
+        
+        // Simple FPS cap
+        SDL_Delay(10);
+    }
+
+    SDL_DestroyTexture(texture);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+
     return 0;
 }
-
