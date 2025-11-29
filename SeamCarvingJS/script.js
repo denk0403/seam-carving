@@ -47,12 +47,11 @@ class Utils {
 
 	getColorAt(image, x, y) {
 		const idx = (y * image.width + x) * 4;
-		return new Color(
-			image.data[idx],
-			image.data[idx + 1],
-			image.data[idx + 2],
-			image.data[idx + 3]
-		);
+		const r = image.data[idx];
+		const g = image.data[idx + 1];
+		const b = image.data[idx + 2];
+		// Pack into 0xRRGGBB
+		return (r << 16) | (g << 8) | b;
 	}
 
 	verifyPixelGraph(pixels) {
@@ -200,33 +199,10 @@ class Utils {
 
 const utils = new Utils();
 
-// --- Color Helper ---
-class Color {
-	constructor(r, g, b, a = 255) {
-		this.r = Math.floor(r);
-		this.g = Math.floor(g);
-		this.b = Math.floor(b);
-		this.a = Math.floor(a);
-	}
-
-	getRed() {
-		return this.r;
-	}
-	getGreen() {
-		return this.g;
-	}
-	getBlue() {
-		return this.b;
-	}
-
-	toCSS() {
-		return `rgba(${this.r}, ${this.g}, ${this.b}, ${this.a / 255})`;
-	}
-
-	static RED = new Color(255, 0, 0);
-	static BLACK = new Color(0, 0, 0);
-	static WHITE = new Color(255, 255, 255);
-}
+// --- Color Constants (Hex integers 0xRRGGBB) ---
+const COLOR_RED = 0xFF0000;
+const COLOR_BLACK = 0x000000;
+const COLOR_WHITE = 0xFFFFFF;
 
 // --- Pixel Classes ---
 
@@ -270,7 +246,7 @@ class BorderPixel extends APixel {
 	}
 
 	getColor(mode) {
-		return Color.BLACK;
+		return COLOR_BLACK;
 	}
 
 	brightness() {
@@ -304,7 +280,7 @@ class BorderPixel extends APixel {
 
 class Pixel extends APixel {
 	/**
-	 * @param {Color|Pixel} colorOrBase
+	 * @param {number|Pixel} colorOrBase
 	 * @param {APixel} up
 	 * @param {APixel} down
 	 * @param {APixel} left
@@ -314,8 +290,8 @@ class Pixel extends APixel {
 		super();
 
 		if (arguments.length === 1 || arguments.length === 0) {
-			// Constructor 1: (Color origColor) or ()
-			this.color = colorOrBase || Color.WHITE;
+			// Constructor 1: (number origColor) or ()
+			this.color = (colorOrBase !== undefined) ? colorOrBase : COLOR_WHITE;
 			this.beingRemoved = false;
 			this.up = new BorderPixel();
 			this.down = new BorderPixel();
@@ -387,7 +363,7 @@ class Pixel extends APixel {
 		if (mode === undefined) mode = 1; // Default mode
 
 		if (this.beingRemoved) {
-			return Color.RED;
+			return COLOR_RED;
 		}
 
 		if (mode === 1) {
@@ -397,14 +373,17 @@ class Pixel extends APixel {
 			const e = this.energy();
 			const normalizedValue = Math.floor((e / Math.sqrt(32)) * 255);
 			const v = Math.max(0, Math.min(255, normalizedValue));
-			return new Color(v, v, v);
+			return (v << 16) | (v << 8) | v;
 		}
 	}
 
 	brightness() {
 		if (this.brightnessCache === null) {
-			this.brightnessCache =
-				(this.color.r + this.color.b + this.color.g) / 3.0 / 255.0;
+			const c = this.color;
+			const r = (c >> 16) & 0xFF;
+			const g = (c >> 8) & 0xFF;
+			const b = c & 0xFF;
+			this.brightnessCache = (r + g + b) / 765.0;
 		}
 		return this.brightnessCache;
 	}
@@ -714,9 +693,9 @@ class SeamCarving {
 					b = 0;
 				} else if (this.colorMode === 1) {
 					const c = pixel.color;
-					r = c.r;
-					g = c.g;
-					b = c.b;
+					r = (c >> 16) & 0xFF;
+					g = (c >> 8) & 0xFF;
+					b = c & 0xFF;
 				} else {
 					const e = pixel.energy();
 					const normalizedValue = Math.floor((e / sqrt32) * 255);
