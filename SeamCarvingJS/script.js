@@ -66,65 +66,101 @@ class Utils {
 	 * @returns {ASeamInfo[]}
 	 */
 	seamify(pixels, isVert) {
-		let memo = [];
-		let nextMemo = [];
-
 		if (pixels.length === 0 || pixels[0].length === 0) return [];
 
-		// Init memo with nulls
-		for (let i = 0; i < pixels[0].length; i++) {
-			memo.push(null);
+		const h = pixels.length;
+		const w = pixels[0].length;
+
+		// Flat arrays for performance (Float32 for weights, Int32 for parent indices)
+		const energies = new Float32Array(w * h);
+		// parents stores the flat index of the parent in the previous row
+		const parents = new Int32Array(w * h);
+
+		// Initialize first row
+		for (let x = 0; x < w; x++) {
+			energies[x] = pixels[0][x].energy();
+			parents[x] = -1;
 		}
 
-		for (let pixelArr of pixels) {
-			let x = 0;
-			for (let pixel of pixelArr) {
-				nextMemo.push(this.seamifyMemo(pixel, memo, x, isVert));
-				x++;
+		// DP loop
+		for (let y = 1; y < h; y++) {
+			const rowOffset = y * w;
+			const prevRowOffset = (y - 1) * w;
+
+			for (let x = 0; x < w; x++) {
+				const pixel = pixels[y][x];
+				const energy = pixel.energy();
+
+				// Default to top neighbor
+				const topIdx = prevRowOffset + x;
+				let minParentCost = energies[topIdx];
+				let minParentIdx = topIdx;
+
+				// Check top-left
+				if (x > 0) {
+					const leftIdx = prevRowOffset + (x - 1);
+					if (energies[leftIdx] < minParentCost) {
+						minParentCost = energies[leftIdx];
+						minParentIdx = leftIdx;
+					}
+				}
+
+				// Check top-right
+				if (x < w - 1) {
+					const rightIdx = prevRowOffset + (x + 1);
+					if (energies[rightIdx] < minParentCost) {
+						minParentCost = energies[rightIdx];
+						minParentIdx = rightIdx;
+					}
+				}
+
+				const idx = rowOffset + x;
+				energies[idx] = minParentCost + energy;
+				parents[idx] = minParentIdx;
 			}
-			memo = nextMemo;
-			nextMemo = [];
-		}
-		return memo;
-	}
-
-	/**
-	 * @param {APixel} pixel
-	 * @param {ASeamInfo[]} memo
-	 * @param {number} index
-	 * @param {boolean} isVert
-	 * @returns {ASeamInfo}
-	 */
-	seamifyMemo(pixel, memo, index, isVert) {
-		const topLeft = this.getSeamOrNull(memo, index - 1);
-		const topLeftValue = topLeft === null ? 0.0 : topLeft.totalWeight;
-
-		const top = this.getSeamOrNull(memo, index);
-		const topValue = top === null ? 0.0 : top.totalWeight;
-
-		const topRight = this.getSeamOrNull(memo, index + 1);
-		const topRightValue = topRight === null ? 0.0 : topRight.totalWeight;
-
-		let minSeam = top;
-		let minSeamValue = topValue;
-
-		if (topLeft !== null && topLeftValue < minSeamValue) {
-			minSeamValue = topLeftValue;
-			minSeam = topLeft;
-		}
-		if (topRight !== null && topRightValue < minSeamValue) {
-			minSeamValue = topRightValue;
-			minSeam = topRight;
 		}
 
-		const energy = pixel.energy();
-		if (minSeam === null) {
-			return isVert
-				? new VertSeamInfo(pixel, minSeamValue + energy, null, index)
-				: new HorizSeamInfo(pixel, minSeamValue + energy, null, index);
-		} else {
-			return minSeam.makeNextSeam(pixel, minSeamValue + energy, index);
+		// Find best seam end in the last row
+		let minSeamIdx = -1;
+		let minSeamCost = Infinity;
+		const lastRowOffset = (h - 1) * w;
+
+		for (let x = 0; x < w; x++) {
+			const idx = lastRowOffset + x;
+			const cost = energies[idx];
+			if (cost < minSeamCost) {
+				minSeamCost = cost;
+				minSeamIdx = idx;
+			}
 		}
+
+		// Reconstruct the path indices from bottom to top
+		const pathIndices = new Int32Array(h);
+		let currIdx = minSeamIdx;
+		for (let y = h - 1; y >= 0; y--) {
+			pathIndices[y] = currIdx;
+			currIdx = parents[currIdx];
+		}
+
+		// Build the linked list of SeamInfo objects (top to bottom)
+		// Note: SeamInfo constructor takes 'cameFrom' (parent), so we build top-down
+		let lastSeamInfo = null;
+		for (let y = 0; y < h; y++) {
+			const flatIdx = pathIndices[y];
+			// x coordinate is remainder of division by width
+			const x = flatIdx % w;
+			const pixel = pixels[y][x];
+			const weight = energies[flatIdx];
+
+			if (isVert) {
+				lastSeamInfo = new VertSeamInfo(pixel, weight, lastSeamInfo, x);
+			} else {
+				lastSeamInfo = new HorizSeamInfo(pixel, weight, lastSeamInfo, x);
+			}
+		}
+
+		// Return array containing just the tail of the best seam
+		return [lastSeamInfo];
 	}
 
 	/**
@@ -140,18 +176,6 @@ class Utils {
 			}
 		}
 		return seams[indexOfSmallest];
-	}
-
-	/**
-	 * @param {ASeamInfo[]} memo
-	 * @param {number} index
-	 * @returns {ASeamInfo}
-	 */
-	getSeamOrNull(memo, index) {
-		if (index >= 0 && index < memo.length) {
-			return memo[index];
-		}
-		return null;
 	}
 
 	/**
@@ -199,18 +223,9 @@ class Color {
 		return `rgba(${this.r}, ${this.g}, ${this.b}, ${this.a / 255})`;
 	}
 
-	static get RED() {
-		if (!Color._RED) Color._RED = new Color(255, 0, 0);
-		return Color._RED;
-	}
-	static get BLACK() {
-		if (!Color._BLACK) Color._BLACK = new Color(0, 0, 0);
-		return Color._BLACK;
-	}
-	static get WHITE() {
-		if (!Color._WHITE) Color._WHITE = new Color(255, 255, 255);
-		return Color._WHITE;
-	}
+	static RED = new Color(255, 0, 0);
+	static BLACK = new Color(0, 0, 0);
+	static WHITE = new Color(255, 255, 255);
 }
 
 // --- Pixel Classes ---
@@ -389,7 +404,7 @@ class Pixel extends APixel {
 	brightness() {
 		if (this.brightnessCache === null) {
 			this.brightnessCache =
-				(this.color.getRed() + this.color.getBlue() + this.color.getGreen()) / 3.0 / 255.0;
+				(this.color.r + this.color.b + this.color.g) / 3.0 / 255.0;
 		}
 		return this.brightnessCache;
 	}
@@ -685,15 +700,36 @@ class SeamCarving {
 		const imgData = ctx.createImageData(currentWidth, currentHeight);
 		const data = imgData.data;
 
+		const sqrt32 = 5.65685424949;
+
 		for (let y = 0; y < currentHeight; y++) {
 			const row = this.pixels[y];
 			for (let x = 0; x < row.length; x++) {
 				const pixel = row[x];
-				const color = pixel.getColor(this.colorMode);
+				
+				let r, g, b;
+				if (pixel.beingRemoved) {
+					r = 255;
+					g = 0;
+					b = 0;
+				} else if (this.colorMode === 1) {
+					const c = pixel.color;
+					r = c.r;
+					g = c.g;
+					b = c.b;
+				} else {
+					const e = pixel.energy();
+					const normalizedValue = Math.floor((e / sqrt32) * 255);
+					const v = normalizedValue > 255 ? 255 : (normalizedValue < 0 ? 0 : normalizedValue);
+					r = v;
+					g = v;
+					b = v;
+				}
+
 				const idx = (y * currentWidth + x) * 4;
-				data[idx] = color.r;
-				data[idx + 1] = color.g;
-				data[idx + 2] = color.b;
+				data[idx] = r;
+				data[idx + 1] = g;
+				data[idx + 2] = b;
 				data[idx + 3] = 255; // alpha
 			}
 		}
