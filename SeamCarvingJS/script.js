@@ -826,17 +826,31 @@ let seamCarving = null;
 let canvas = document.getElementById("seamCanvas");
 let ctx = canvas.getContext("2d", { willReadFrequently: true });
 let animationId = null;
+let video = document.getElementById("webcamVideo");
+let isWebcamActive = false;
 
 // DOM Elements
 const btnPlayPause = document.getElementById("btnPlayPause");
 const btnToggleMode = document.getElementById("btnToggleMode");
 const btnReverse = document.getElementById("btnReverse");
 const btnColorMode = document.getElementById("btnColorMode");
+const btnWebcam = document.getElementById("btnWebcam");
 const statusText = document.getElementById("statusText");
 const dimText = document.getElementById("dimensions");
 const fpsText = document.getElementById("fpsCounter");
+const inputTargetWidth = document.getElementById("targetWidth");
+const inputTargetHeight = document.getElementById("targetHeight");
+const webcamControls = document.getElementById("webcamControls");
+const videoWrapper = document.getElementById("videoWrapper");
 
 function updateStatus() {
+	if (isWebcamActive) {
+		btnPlayPause.innerText = video.paused ? "Resume Feed" : "Pause Feed";
+		statusText.innerText = "Live Seam Carving";
+		dimText.innerText = `Target: ${inputTargetWidth.value} x ${inputTargetHeight.value}`;
+		return;
+	}
+
 	if (!seamCarving) return;
 
 	btnPlayPause.innerText = seamCarving.isPlaying ? "Pause" : "Play";
@@ -869,6 +883,78 @@ function loop(timestamp) {
 		seamCarving.onTick();
 		seamCarving.updateCanvas(ctx, canvas);
 		updateStatus();
+	} else if (isWebcamActive && video.readyState >= 2 && !video.paused) {
+		// Live Seam Carving Loop
+		
+		// 1. Draw video to canvas to get data (scaled down if needed)
+		let w = video.videoWidth;
+		let h = video.videoHeight;
+
+		if (w === 0 || h === 0) return;
+
+		// Limit max processing size for performance
+		const MAX_SIZE = 400; 
+		if (w > MAX_SIZE || h > MAX_SIZE) {
+			const ratio = Math.min(MAX_SIZE / w, MAX_SIZE / h);
+			w = Math.floor(w * ratio);
+			h = Math.floor(h * ratio);
+		}
+		
+		// Ensure canvas is large enough for the operation
+		if (canvas.width !== w || canvas.height !== h) {
+			canvas.width = w;
+			canvas.height = h;
+		}
+
+        // Update video element size to match canvas for consistency
+        video.width = w;
+        video.height = h;
+
+		ctx.drawImage(video, 0, 0, w, h);
+		const imgData = ctx.getImageData(0, 0, w, h);
+
+		// 2. Create SeamCarving instance
+		// We don't use the global seamCarving instance to avoid state issues with the main loop's animation
+		// But since we are IN the loop, we can just use a local one.
+		const sc = new SeamCarving(imgData);
+
+		// 3. Carve to target
+		const targetW = parseInt(inputTargetWidth.value) || w;
+		const targetH = parseInt(inputTargetHeight.value) || h;
+
+		// Clamp targets
+		const safeTargetW = Math.max(1, Math.min(w, targetW));
+		const safeTargetH = Math.max(1, Math.min(h, targetH));
+
+		// Remove seams until target reached
+		let currentW = sc.pixels.length > 0 ? sc.pixels[0].length : 0;
+		let currentH = sc.pixels.length;
+
+		while ((currentW > safeTargetW || currentH > safeTargetH) && currentW > 0 && currentH > 0) {
+			const diffW = Math.max(0, currentW - safeTargetW);
+			const diffH = Math.max(0, currentH - safeTargetH);
+			
+			if (diffW === 0) {
+				sc.removeVert = false;
+			} else if (diffH === 0) {
+				sc.removeVert = true;
+			} else {
+				// Probability proportional to seams left to remove
+				sc.removeVert = Math.random() < (diffW / (diffW + diffH));
+			}
+
+			sc.seamCarve();
+			sc.removeBadSeam();
+
+			// Update dimensions
+			currentH = sc.pixels.length;
+			currentW = sc.pixels.length > 0 ? sc.pixels[0].length : 0;
+		}
+
+		// 4. Draw Result
+		sc.updateCanvas(ctx, canvas);
+		
+		updateStatus();
 	}
 
 	// FPS Counter
@@ -889,8 +975,23 @@ animationId = requestAnimationFrame(loop);
 const imageUploadInput = document.getElementById("imageUpload");
 const dropOverlay = document.getElementById("dropOverlay");
 
+function stopWebcam() {
+	if (isWebcamActive) {
+		isWebcamActive = false;
+		const stream = video.srcObject;
+		if (stream) {
+			stream.getTracks().forEach(track => track.stop());
+			video.srcObject = null;
+		}
+		webcamControls.style.display = "none";
+        videoWrapper.style.display = "none";
+	}
+}
+
 function handleImageUpload(file) {
 	if (!file) return;
+	
+	stopWebcam();
 
 	const reader = new FileReader();
 	reader.onload = function (event) {
@@ -965,8 +1066,60 @@ window.addEventListener("paste", (e) => {
 
 // Controls
 btnPlayPause.addEventListener("click", () => {
+	if (isWebcamActive) {
+		if (video.paused) {
+			video.play();
+		} else {
+			video.pause();
+		}
+		updateStatus();
+		return;
+	}
+
 	if (seamCarving) seamCarving.isPlaying = !seamCarving.isPlaying;
 });
+
+btnWebcam.addEventListener("click", () => {
+	startWebcam();
+});
+
+function startWebcam() {
+	if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+		navigator.mediaDevices.getUserMedia({ video: true })
+			.then(function(stream) {
+				video.srcObject = stream;
+				video.play();
+				
+				video.onloadedmetadata = () => {
+					let w = video.videoWidth;
+					let h = video.videoHeight;
+					// Apply initial downscale logic to match the loop's processing size
+					const MAX_SIZE = 400;
+					if (w > MAX_SIZE || h > MAX_SIZE) {
+						const ratio = Math.min(MAX_SIZE / w, MAX_SIZE / h);
+						w = Math.floor(w * ratio);
+						h = Math.floor(h * ratio);
+					}
+					
+					
+					inputTargetWidth.value = w;
+					inputTargetHeight.value = h;
+				};
+
+				isWebcamActive = true;
+				seamCarving = null; // Reset current carving
+				webcamControls.style.display = "flex";
+                videoWrapper.style.display = "block"; // Or flex, handled by CSS if class removed, but we used inline style in HTML
+				updateStatus();
+			})
+			.catch(function(error) {
+				console.error("Error accessing webcam:", error);
+				alert("Could not access webcam. Please ensure you have granted permission.");
+			});
+	} else {
+		alert("Webcam not supported in this browser.");
+	}
+}
 
 btnToggleMode.addEventListener("click", () => {
 	if (seamCarving) {

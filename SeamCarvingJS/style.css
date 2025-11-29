@@ -93,10 +93,32 @@ button:disabled {
     border: 1px solid #ddd;
     box-shadow: 0 0 5px rgba(0,0,0,0.05);
     transition: border-color 0.3s;
+    /* Allow flex for side-by-side */
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 20px;
+    padding: 10px;
+}
+
+#videoWrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    border: 1px solid #ccc;
+    box-shadow: 0 0 5px rgba(0,0,0,0.1);
+}
+
+#videoWrapper video {
+    max-width: 100%;
+    height: auto;
+    display: block;
 }
 
 canvas {
     display: block;
+    /* Ensure canvas doesn't shrink weirdly */
+    flex-shrink: 0;
 }
 
 .instructions {
@@ -210,7 +232,16 @@ footer a:hover {
     .canvas-container {
         border-color: #444;
         background-color: #111;
+        scale: -1 1;
     }
+    
+    #videoWrapper {
+        border-color: #555;
+    }
+
+    /* .hidden {
+        display: none !important;
+    } */
 
     .instructions {
         background-color: #363636;

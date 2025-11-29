@@ -14,6 +14,14 @@
             <div class="input-group">
                 <label for="imageUpload">Upload Image:</label>
                 <input type="file" id="imageUpload" accept="image/*">
+                <button id="btnWebcam">Use Webcam</button>
+            </div>
+
+            <div id="webcamControls" class="input-group hidden">
+                 <label for="targetWidth">Target Width:</label>
+                 <input type="number" id="targetWidth" min="1" step="10" style="width: 60px;">
+                 <label for="targetHeight">Target Height:</label>
+                 <input type="number" id="targetHeight" min="1" step="10" style="width: 60px;">
             </div>
             
             <div class="button-group">
@@ -31,7 +39,10 @@
             <span id="fpsCounter"></span>
         </div>
 
-        <div class="canvas-container">
+        <div class="canvas-container" id="canvasContainer">
+            <div id="videoWrapper" class="hidden">
+                <video id="webcamVideo" autoplay playsinline></video>
+            </div>
             <canvas id="seamCanvas"></canvas>
         </div>
 
